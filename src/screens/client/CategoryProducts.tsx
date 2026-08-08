@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { Restaurant, Category, Product, Supplement, Drink } from '@/lib/supabase';
+import type { Category, Restaurant, Product, Supplement, Drink } from '@/lib/supabase';
 import { Card, Spinner, EmptyState, Button, Badge } from '@/components/ui';
-import { UtensilsCrossed, Star, MapPin, Plus, Tag, ArrowLeft, CupSoda } from 'lucide-react';
+import { ArrowLeft, UtensilsCrossed, Plus, Tag, Star, MapPin, CupSoda, Leaf, FlaskConical, Check } from 'lucide-react';
 import { formatPrice } from '@/lib/constants';
 
 interface ProductWithSupplements extends Product {
@@ -10,61 +10,47 @@ interface ProductWithSupplements extends Product {
   drinks?: Drink[];
 }
 
-export default function RestaurantMenu({
+export default function CategoryProducts({
+  category,
   restaurant,
   onBack,
   onAddToCart,
 }: {
+  category: Category;
   restaurant: Restaurant;
   onBack: () => void;
   onAddToCart: (product: Product, supplements: Supplement[], drinks: Drink[]) => void;
 }) {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Record<string, ProductWithSupplements[]>>({});
+  const [products, setProducts] = useState<ProductWithSupplements[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductWithSupplements | null>(null);
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
   const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
   const [selectedDrinks, setSelectedDrinks] = useState<string[]>([]);
+  const [ingredientImages, setIngredientImages] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
-    loadMenu();
-  }, [restaurant.id]);
+    loadProducts();
+  }, [category.id]);
 
-  async function loadMenu() {
+  async function loadProducts() {
     setLoading(true);
-    const { data: catsData } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('restaurant_id', restaurant.id)
-      .order('sort_order');
-    const cats = (catsData as Category[]) ?? [];
-    setCategories(cats);
-    if (cats.length > 0) setActiveCategory(cats[0].id);
-
-    const { data: prods } = await supabase
+    const { data } = await supabase
       .from('products')
       .select('*')
+      .eq('category_id', category.id)
       .eq('restaurant_id', restaurant.id)
       .order('name');
-    const allProducts = (prods as Product[]) ?? [];
-
-    const byCategory: Record<string, ProductWithSupplements[]> = {};
-    for (const p of allProducts) {
-      if (!byCategory[p.category_id]) byCategory[p.category_id] = [];
-      byCategory[p.category_id].push(p);
-    }
-    setProducts(byCategory);
+    setProducts((data as Product[]) ?? []);
     setLoading(false);
   }
 
   async function openProduct(product: Product) {
-    const { data } = await supabase
+    const { data: suppData } = await supabase
       .from('product_supplements')
       .select('supplement_id, supplements(id, name, price, image_url, is_available)')
       .eq('product_id', product.id);
-    const supps: Supplement[] = (data ?? [])
+    const supps: Supplement[] = (suppData ?? [])
       .map((row: any) => row.supplements)
       .filter(Boolean)
       .filter((s: Supplement) => s.is_available);
@@ -78,10 +64,26 @@ export default function RestaurantMenu({
       .filter(Boolean);
     const availableDrinks = allDrinks.filter((d) => d.is_available);
 
-    setSelectedProduct({ ...product, supplements: supps, drinks: availableDrinks });
+    const { data: restoIngs } = await supabase
+      .from('ingredients')
+      .select('name, image_url, is_available')
+      .eq('restaurant_id', restaurant.id);
+    const ingMap = new Map((restoIngs ?? []).map((ri: any) => [ri.name, ri]));
+    const imgMap: Record<string, string | null> = {};
+    const availableIngs = (product.ingredients ?? []).filter((name) => {
+      const ri = ingMap.get(name);
+      if (ri) {
+        imgMap[name] = ri.image_url;
+        return ri.is_available;
+      }
+      return true;
+    });
+
+    setSelectedProduct({ ...product, ingredients: availableIngs, supplements: supps, drinks: availableDrinks });
     setSelectedSupplements(supps.map((s) => s.id));
-    setSelectedIngredients(product.ingredients ?? []);
+    setSelectedIngredients(availableIngs);
     setSelectedDrinks([]);
+    setIngredientImages(imgMap);
   }
 
   function toggleSupplement(id: string) {
@@ -108,67 +110,38 @@ export default function RestaurantMenu({
     setSelectedProduct(null);
   }
 
-  const currentProducts = activeCategory ? products[activeCategory] ?? [] : [];
-
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
       <button onClick={onBack} className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mb-4">
-        <ArrowLeft className="w-4 h-4" /> Retour
+        <ArrowLeft className="w-4 h-4" /> Retour aux catégories
       </button>
 
-      <div className="h-48 rounded-2xl bg-gradient-to-br from-orange-100 to-amber-100 relative overflow-hidden mb-6">
-        {restaurant.cover_url ? (
-          <img src={restaurant.cover_url} alt={restaurant.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <UtensilsCrossed className="w-16 h-16 text-orange-300" />
+      <div className="mb-6 flex items-center gap-4">
+        {category.image_url && (
+          <div className="w-16 h-16 rounded-2xl overflow-hidden flex-shrink-0">
+            <img src={category.image_url} alt={category.name} className="w-full h-full object-cover" />
           </div>
         )}
-      </div>
-
-      <div className="mb-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{restaurant.name}</h1>
-            {restaurant.description && <p className="text-slate-500 mt-1">{restaurant.description}</p>}
-            <div className="flex items-center gap-4 mt-2 text-sm text-slate-400">
-              <span className="flex items-center gap-1">
-                <MapPin className="w-4 h-4" /> {restaurant.city}
-              </span>
-              {restaurant.rating > 0 && (
-                <span className="flex items-center gap-1 text-amber-600 font-semibold">
-                  <Star className="w-4 h-4 fill-amber-500 text-amber-500" /> {restaurant.rating.toFixed(1)}
-                </span>
-              )}
-            </div>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{category.name}</h1>
+          <div className="flex items-center gap-4 mt-2 text-sm text-slate-400">
+          <span className="flex items-center gap-1">
+            <MapPin className="w-4 h-4" /> {restaurant.name} — {restaurant.city}
+          </span>
+          {restaurant.rating > 0 && (
+            <span className="flex items-center gap-1 text-amber-600 font-semibold">
+              <Star className="w-4 h-4 fill-amber-500 text-amber-500" /> {restaurant.rating.toFixed(1)}
+            </span>
+          )}
           <Badge className={restaurant.is_open ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}>
             {restaurant.is_open ? 'Ouvert' : 'Fermé'}
           </Badge>
         </div>
       </div>
-
-      {categories.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-2 mb-6 -mx-4 px-4">
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setActiveCategory(cat.id)}
-              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all ${
-                activeCategory === cat.id
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {cat.name}
-            </button>
-          ))}
-        </div>
-      )}
-
+      </div>
       {loading ? (
         <Spinner />
-      ) : currentProducts.length === 0 ? (
+      ) : products.length === 0 ? (
         <EmptyState
           icon={<UtensilsCrossed className="w-8 h-8" />}
           title="Aucun produit"
@@ -176,11 +149,15 @@ export default function RestaurantMenu({
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {currentProducts.map((product) => {
+          {products.map((product, idx) => {
             const hasPromo = product.promotion_price && product.promotion_price < product.price;
             const displayPrice = hasPromo ? product.promotion_price! : product.price;
             return (
-              <Card key={product.id} className="p-4 flex gap-4" onClick={() => restaurant.is_open && product.is_available && openProduct(product)}>
+              <Card
+                key={product.id}
+                className="p-4 flex gap-4 animate-fade-in-up"
+                onClick={() => restaurant.is_open && product.is_available && openProduct(product)}
+              >
                 <div className="w-24 h-24 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0">
                   {product.image_url && <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />}
                 </div>
@@ -225,46 +202,68 @@ export default function RestaurantMenu({
               <h2 className="text-xl font-bold text-slate-900 mb-1">{selectedProduct.name}</h2>
               {selectedProduct.description && <p className="text-slate-500 text-sm mb-4">{selectedProduct.description}</p>}
 
-      
-
               {selectedProduct.ingredients && selectedProduct.ingredients.length > 0 && (
                 <div className="mb-4">
                   <h3 className="font-semibold text-slate-700 mb-1">Ingrédients</h3>
                   <p className="text-xs text-slate-400 mb-2">Décochez pour retirer un ingrédient</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {selectedProduct.ingredients.map((ing) => {
                       const checked = selectedIngredients.includes(ing);
+                      const img = ingredientImages[ing];
                       return (
-                        <label key={ing} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium cursor-pointer transition-all ${checked ? 'bg-orange-50 border-orange-300 text-orange-700' : 'bg-slate-100 border-slate-200 text-slate-400 line-through'}`}>
-                          <input
-                            type="checkbox"
-                            className="w-3.5 h-3.5 accent-orange-500"
-                            checked={checked}
-                            onChange={(e) => setSelectedIngredients(e.target.checked ? [...selectedIngredients, ing] : selectedIngredients.filter((i) => i !== ing))}
-                          />
-                          {ing}
-                        </label>
+                        <button
+                          key={ing}
+                          type="button"
+                          onClick={() => setSelectedIngredients(checked ? selectedIngredients.filter((i) => i !== ing) : [...selectedIngredients, ing])}
+                          className={`flex items-center gap-2 p-2 rounded-xl border transition-all text-left ${
+                            checked ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-slate-50'
+                          }`}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {img ? (
+                              <img src={img} alt={ing} className="w-full h-full object-cover" />
+                            ) : (
+                              <Leaf className="w-4 h-4 text-slate-300" />
+                            )}
+                          </div>
+                          <span className={`flex-1 text-xs font-medium truncate ${checked ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{ing}</span>
+                          <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${
+                            checked ? 'bg-orange-500' : 'border border-slate-300'
+                          }`}>
+                            {checked && <Check className="w-3 h-3 text-white" />}
+                          </div>
+                        </button>
                       );
                     })}
                   </div>
                 </div>
               )}
-                      {selectedProduct.supplements && selectedProduct.supplements.length > 0 && (
+
+              {selectedProduct.supplements && selectedProduct.supplements.length > 0 && (
                 <div className="mb-4">
                   <h3 className="font-semibold text-slate-700 mb-2">Suppléments</h3>
                   <div className="space-y-2">
                     {selectedProduct.supplements.map((s) => (
                       <label key={s.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50">
                         <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {s.image_url ? (
+                              <img src={s.image_url} alt={s.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <FlaskConical className="w-4 h-4 text-slate-300" />
+                            )}
+                          </div>
+                          <span className="text-sm font-medium text-slate-700">{s.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-orange-600">+{formatPrice(s.price)}</span>
                           <input
                             type="checkbox"
                             checked={selectedSupplements.includes(s.id)}
                             onChange={() => toggleSupplement(s.id)}
                             className="w-4 h-4 rounded accent-orange-500"
                           />
-                          <span className="text-sm font-medium text-slate-700">{s.name}</span>
                         </div>
-                        <span className="text-sm font-semibold text-orange-600">+{formatPrice(s.price)}</span>
                       </label>
                     ))}
                   </div>
@@ -278,15 +277,24 @@ export default function RestaurantMenu({
                     {selectedProduct.drinks.map((d) => (
                       <label key={d.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50">
                         <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {d.image_url ? (
+                              <img src={d.image_url} alt={d.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <CupSoda className="w-4 h-4 text-slate-300" />
+                            )}
+                          </div>
+                          <span className="text-sm font-medium text-slate-700">{d.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-orange-600">+{formatPrice(d.price)}</span>
                           <input
                             type="checkbox"
                             checked={selectedDrinks.includes(d.id)}
                             onChange={() => toggleDrink(d.id)}
                             className="w-4 h-4 rounded accent-orange-500"
                           />
-                          <span className="text-sm font-medium text-slate-700">{d.name}</span>
                         </div>
-                        <span className="text-sm font-semibold text-orange-600">+{formatPrice(d.price)}</span>
                       </label>
                     ))}
                   </div>

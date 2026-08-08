@@ -56,6 +56,7 @@ export interface Category {
   restaurant_id: string;
   name: string;
   sort_order: number;
+  image_url: string | null;
 }
 
 export interface Subcategory {
@@ -84,6 +85,8 @@ export interface Ingredient {
   id: string;
   restaurant_id: string;
   name: string;
+  image_url: string | null;
+  is_available: boolean;
 }
 
 export interface Supplement {
@@ -91,6 +94,17 @@ export interface Supplement {
   restaurant_id: string;
   name: string;
   price: number;
+  image_url: string | null;
+  is_available: boolean;
+}
+
+export interface Drink {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  price: number;
+  image_url: string | null;
+  is_available: boolean;
 }
 
 export interface Cart {
@@ -107,6 +121,7 @@ export interface CartItem {
   quantity: number;
   unit_price: number;
   supplements: { id: string; name: string; price: number }[];
+  drinks: { id: string; name: string; price: number }[];
 }
 
 export interface Order {
@@ -147,6 +162,7 @@ export interface OrderItem {
   quantity: number;
   unit_price: number;
   supplements: { name: string; price: number }[];
+  drinks: { name: string; price: number }[];
 }
 
 export interface Delivery {

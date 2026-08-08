@@ -42,7 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       return;
     }
-    setLoading(true);
+    if (profile) return;
+    if (!loading) setLoading(true);
     (async () => {
       const { data, error } = await supabase
         .from('profiles')

@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { Restaurant, Category, Product, Order, OrderItem, Delivery } from '@/lib/supabase';
+import type { Restaurant, Category, Product, Order, OrderItem, Delivery, Ingredient, Supplement, Drink } from '@/lib/supabase';
 import { Card, Spinner, Button, Input, Textarea, Select, Badge, EmptyState, Modal } from '@/components/ui';
-import { UtensilsCrossed, Plus, Edit, Trash2, Package, LayoutGrid, Tag, Star, TrendingUp, DollarSign, Clock, Bike, Printer } from 'lucide-react';
+import { UtensilsCrossed, Plus, Edit, Trash2, Package, LayoutGrid, Tag, Star, TrendingUp, DollarSign, Clock, Bike, Printer, Leaf, FlaskConical, AlertCircle, Check, CupSoda } from 'lucide-react';
 import { ORDER_STATUS_LABELS, ORDER_STATUS_COLORS, DELIVERY_STATUS_LABELS, DELIVERY_STATUS_COLORS, formatPrice, formatDate } from '@/lib/constants';
 import NotificationBell from '@/components/NotificationBell';
+import ImageUpload from '@/components/ImageUpload';
 
-type Tab = 'overview' | 'orders' | 'deliveries' | 'products' | 'categories';
+type Tab = 'overview' | 'orders' | 'deliveries' | 'products' | 'categories' | 'ingredients' | 'supplements' | 'drinks';
 
 export default function RestaurateurDashboard() {
   const { profile } = useAuth();
@@ -87,6 +88,9 @@ export default function RestaurateurDashboard() {
           { key: 'deliveries', label: 'Livraisons', icon: Bike },
           { key: 'products', label: 'Produits', icon: UtensilsCrossed },
           { key: 'categories', label: 'Catégories', icon: LayoutGrid },
+          { key: 'ingredients', label: 'Ingrédients', icon: Leaf },
+          { key: 'supplements', label: 'Suppléments', icon: FlaskConical },
+          { key: 'drinks', label: 'Boissons', icon: CupSoda },
         ] as const).map((t) => {
           const Icon = t.icon;
           return (
@@ -108,6 +112,9 @@ export default function RestaurateurDashboard() {
       {tab === 'deliveries' && <DeliveriesTab restaurantId={restaurant.id} />}
       {tab === 'products' && <ProductsTab restaurantId={restaurant.id} />}
       {tab === 'categories' && <CategoriesTab restaurantId={restaurant.id} />}
+      {tab === 'ingredients' && <IngredientsTab restaurantId={restaurant.id} />}
+      {tab === 'supplements' && <SupplementsTab restaurantId={restaurant.id} />}
+      {tab === 'drinks' && <DrinksTab restaurantId={restaurant.id} />}
 
       <RestaurantFormModal
         open={showRestaurantModal}
@@ -571,12 +578,23 @@ function ProductFormModal({
   const [imageUrl, setImageUrl] = useState('');
   const [promoPrice, setPromoPrice] = useState('');
   const [available, setAvailable] = useState(true);
-  const [ingredients, setIngredients] = useState<string[]>([]);
-  const [newIngredient, setNewIngredient] = useState('');
-  const [supplements, setSupplements] = useState<{ id: string; name: string; price: number }[]>([]);
-  const [newSuppName, setNewSuppName] = useState('');
-  const [newSuppPrice, setNewSuppPrice] = useState('');
+  const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+  const [restaurantIngredients, setRestaurantIngredients] = useState<Ingredient[]>([]);
+  const [selectedSuppIds, setSelectedSuppIds] = useState<string[]>([]);
+  const [restaurantSupplements, setRestaurantSupplements] = useState<Supplement[]>([]);
+  const [selectedDrinkIds, setSelectedDrinkIds] = useState<string[]>([]);
+  const [restaurantDrinks, setRestaurantDrinks] = useState<Drink[]>([]);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.from('ingredients').select('*').eq('restaurant_id', restaurantId).order('name')
+      .then(({ data }) => setRestaurantIngredients((data as Ingredient[]) ?? []));
+    supabase.from('supplements').select('*').eq('restaurant_id', restaurantId).order('name')
+      .then(({ data }) => setRestaurantSupplements((data as Supplement[]) ?? []));
+    supabase.from('drinks').select('*').eq('restaurant_id', restaurantId).order('name')
+      .then(({ data }) => setRestaurantDrinks((data as Drink[]) ?? []));
+  }, [restaurantId, open]);
 
   useEffect(() => {
     if (product) {
@@ -587,46 +605,49 @@ function ProductFormModal({
       setImageUrl(product.image_url ?? '');
       setPromoPrice(product.promotion_price ? String(product.promotion_price) : '');
       setAvailable(product.is_available);
-      setIngredients(product.ingredients ?? []);
+      setSelectedIngredients(product.ingredients ?? []);
       supabase
         .from('product_supplements')
-        .select('supplement_id, supplements(id, name, price)')
+        .select('supplement_id')
         .eq('product_id', product.id)
         .then(({ data: prodSupps }) => {
-          setSupplements((prodSupps ?? []).map((row: any) => row.supplements).filter(Boolean));
+          setSelectedSuppIds((prodSupps ?? []).map((row: any) => row.supplement_id).filter(Boolean));
+        });
+      supabase
+        .from('product_drinks')
+        .select('drink_id')
+        .eq('product_id', product.id)
+        .then(({ data: prodDrinks }) => {
+          setSelectedDrinkIds((prodDrinks ?? []).map((row: any) => row.drink_id).filter(Boolean));
         });
     } else {
       setName(''); setDescription(''); setPrice(''); setCategoryId(categories[0]?.id ?? '');
-      setImageUrl(''); setPromoPrice(''); setAvailable(true); setIngredients([]); setSupplements([]);
+      setImageUrl(''); setPromoPrice(''); setAvailable(true); setSelectedIngredients([]); setSelectedSuppIds([]); setSelectedDrinkIds([]);
     }
-    setNewIngredient(''); setNewSuppName(''); setNewSuppPrice('');
   }, [product, open, categories]);
 
-  function addIngredient() {
-    const val = newIngredient.trim();
-    if (!val || ingredients.includes(val)) return;
-    setIngredients((prev) => [...prev, val]);
-    setNewIngredient('');
+  function toggleIngredient(ingName: string) {
+    setSelectedIngredients((prev) =>
+      prev.includes(ingName) ? prev.filter((i) => i !== ingName) : [...prev, ingName]
+    );
   }
 
-  function removeIngredient(ing: string) {
-    setIngredients((prev) => prev.filter((i) => i !== ing));
+  function toggleSupplement(id: string) {
+    setSelectedSuppIds((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    );
   }
 
-  function addSupplement() {
-    const val = newSuppName.trim();
-    if (!val || supplements.some((s) => s.name === val)) return;
-    setSupplements((prev) => [...prev, { id: crypto.randomUUID(), name: val, price: parseFloat(newSuppPrice) || 0 }]);
-    setNewSuppName(''); setNewSuppPrice('');
-  }
-
-  function removeSupplement(id: string) {
-    setSupplements((prev) => prev.filter((s) => s.id !== id));
+  function toggleDrink(id: string) {
+    setSelectedDrinkIds((prev) =>
+      prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]
+    );
   }
 
   async function save() {
     if (!name || !price || !categoryId) return;
     setSaving(true);
+    setError(null);
     const payload = {
       restaurant_id: restaurantId,
       category_id: categoryId,
@@ -636,30 +657,25 @@ function ProductFormModal({
       image_url: imageUrl || null,
       promotion_price: promoPrice ? parseFloat(promoPrice) : null,
       is_available: available,
-      ingredients,
+      ingredients: selectedIngredients,
     };
     let productId = product?.id;
     if (product) {
-      await supabase.from('products').update(payload).eq('id', product.id);
+      const { error: updateError } = await supabase.from('products').update(payload).eq('id', product.id);
+      if (updateError) { setError('L\'enregistrement a échoué, veuillez réessayer.'); setSaving(false); return; }
     } else {
-      const { data: newProd } = await supabase.from('products').insert(payload).select().single();
+      const { data: newProd, error: insertError } = await supabase.from('products').insert(payload).select().single();
+      if (insertError) { setError('L\'enregistrement a échoué, veuillez réessayer.'); setSaving(false); return; }
       productId = newProd?.id;
     }
     if (productId) {
       await supabase.from('product_supplements').delete().eq('product_id', productId);
-      for (const supp of supplements) {
-        let suppId = supp.id;
-        const { data: existing } = await supabase.from('supplements').select('id').eq('restaurant_id', restaurantId).eq('name', supp.name).maybeSingle();
-        if (existing) {
-          suppId = existing.id;
-          await supabase.from('supplements').update({ price: supp.price }).eq('id', suppId);
-        } else {
-          const { data: newSupp } = await supabase.from('supplements').insert({ restaurant_id: restaurantId, name: supp.name, price: supp.price }).select().single();
-          suppId = newSupp?.id;
-        }
-        if (suppId) {
-          await supabase.from('product_supplements').insert({ product_id: productId, supplement_id: suppId });
-        }
+      for (const suppId of selectedSuppIds) {
+        await supabase.from('product_supplements').insert({ product_id: productId, supplement_id: suppId });
+      }
+      await supabase.from('product_drinks').delete().eq('product_id', productId);
+      for (const drinkId of selectedDrinkIds) {
+        await supabase.from('product_drinks').insert({ product_id: productId, drink_id: drinkId });
       }
     }
     setSaving(false);
@@ -679,87 +695,136 @@ function ProductFormModal({
         <Select label="Catégorie" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <Input label="URL de l'image" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." />
+        <ImageUpload label="Image du produit" value={imageUrl || null} onChange={(url) => setImageUrl(url ?? '')} folder={`products/${restaurantId}`} />
 
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">Ingrédients</label>
-          <div className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={newIngredient}
-              onChange={(e) => setNewIngredient(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addIngredient())}
-              placeholder="Ex: Tomate, Mozzarella..."
-              className="flex-1 px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-orange-400"
-            />
-            <button
-              type="button"
-              onClick={addIngredient}
-              className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-200 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-          {ingredients.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {ingredients.map((ing) => (
-                <span key={ing} className="flex items-center gap-1 px-2.5 py-1 bg-orange-50 text-orange-700 border border-orange-200 rounded-full text-xs font-medium">
-                  {ing}
-                  <button type="button" onClick={() => removeIngredient(ing)} className="hover:text-red-500 transition-colors">
-                    <Trash2 className="w-3 h-3" />
+          {restaurantIngredients.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">Aucun ingrédient créé. Ajoutez-en dans l'onglet Ingrédients.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {restaurantIngredients.map((ing) => {
+                const checked = selectedIngredients.includes(ing.name);
+                return (
+                  <button
+                    key={ing.id}
+                    type="button"
+                    onClick={() => toggleIngredient(ing.name)}
+                    className={`flex items-center gap-2 p-2 rounded-xl border transition-all text-left ${
+                      checked ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {ing.image_url ? (
+                        <img src={ing.image_url} alt={ing.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <Leaf className="w-4 h-4 text-slate-300" />
+                      )}
+                    </div>
+                    <span className="flex-1 text-xs font-medium text-slate-700 truncate">{ing.name}</span>
+                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${
+                      checked ? 'bg-orange-500' : 'border border-slate-300'
+                    }`}>
+                      {checked && <Check className="w-3 h-3 text-white" />}
+                    </div>
                   </button>
-                </span>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">Suppléments</label>
-          <div className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={newSuppName}
-              onChange={(e) => setNewSuppName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addSupplement())}
-              placeholder="Nom du supplément"
-              className="flex-1 px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-orange-400"
-            />
-            <input
-              type="number"
-              step="0.01"
-              value={newSuppPrice}
-              onChange={(e) => setNewSuppPrice(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addSupplement())}
-              placeholder="Prix €"
-              className="w-20 px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-orange-400"
-            />
-            <button
-              type="button"
-              onClick={addSupplement}
-              className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-200 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-          {supplements.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {supplements.map((s) => (
-                <span key={s.id} className="flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs font-medium">
-                  {s.name} (+{s.price.toFixed(2)} €)
-                  <button type="button" onClick={() => removeSupplement(s.id)} className="hover:text-red-500 transition-colors">
-                    <Trash2 className="w-3 h-3" />
+          {restaurantSupplements.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">Aucun supplément créé. Ajoutez-en dans l'onglet Suppléments.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {restaurantSupplements.map((sup) => {
+                const checked = selectedSuppIds.includes(sup.id);
+                return (
+                  <button
+                    key={sup.id}
+                    type="button"
+                    onClick={() => toggleSupplement(sup.id)}
+                    className={`flex items-center gap-2 p-2 rounded-xl border transition-all text-left ${
+                      checked ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {sup.image_url ? (
+                        <img src={sup.image_url} alt={sup.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <FlaskConical className="w-4 h-4 text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="block text-xs font-medium text-slate-700 truncate">{sup.name}</span>
+                      <span className="block text-[10px] text-orange-600 font-semibold">{formatPrice(sup.price)}</span>
+                    </div>
+                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${
+                      checked ? 'bg-blue-500' : 'border border-slate-300'
+                    }`}>
+                      {checked && <Check className="w-3 h-3 text-white" />}
+                    </div>
                   </button>
-                </span>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1.5">Boissons</label>
+          {restaurantDrinks.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">Aucune boisson créée. Ajoutez-en dans l'onglet Boissons.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {restaurantDrinks.map((drk) => {
+                const checked = selectedDrinkIds.includes(drk.id);
+                return (
+                  <button
+                    key={drk.id}
+                    type="button"
+                    onClick={() => toggleDrink(drk.id)}
+                    className={`flex items-center gap-2 p-2 rounded-xl border transition-all text-left ${
+                      checked ? 'border-green-400 bg-green-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {drk.image_url ? (
+                        <img src={drk.image_url} alt={drk.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <CupSoda className="w-4 h-4 text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="block text-xs font-medium text-slate-700 truncate">{drk.name}</span>
+                      <span className="block text-[10px] text-orange-600 font-semibold">{formatPrice(drk.price)}</span>
+                    </div>
+                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${
+                      checked ? 'bg-green-500' : 'border border-slate-300'
+                    }`}>
+                      {checked && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+            <AlertCircle className="w-4 h-4" /> {error}
+          </div>
+        )}
 
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} className="w-4 h-4 accent-orange-500" />
           Disponible à la vente
         </label>
+
         <Button onClick={save} disabled={saving} className="w-full">{saving ? 'Enregistrement...' : 'Enregistrer'}</Button>
       </div>
     </Modal>
@@ -770,7 +835,12 @@ function CategoriesTab({ restaurantId }: { restaurantId: string }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
+  const [newImage, setNewImage] = useState<string | null>(null);
   const [editing, setEditing] = useState<Category | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order');
@@ -782,19 +852,41 @@ function CategoriesTab({ restaurantId }: { restaurantId: string }) {
 
   async function addCategory() {
     if (!newName) return;
-    await supabase.from('categories').insert({ restaurant_id: restaurantId, name: newName });
+    setSaving(true);
+    setError(null);
+    const { error: insertError } = await supabase.from('categories').insert({ restaurant_id: restaurantId, name: newName, image_url: newImage });
+    if (insertError) {
+      setError('L\'ajout a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
     setNewName('');
+    setNewImage(null);
+    setSaving(false);
     load();
   }
 
-  async function updateCategory(id: string, name: string) {
-    await supabase.from('categories').update({ name }).eq('id', id);
+  async function updateCategory(id: string) {
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('categories').update({ name: editName, image_url: editImage }).eq('id', id);
+    if (updateError) {
+      setError('La modification a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
     setEditing(null);
+    setSaving(false);
     load();
   }
 
   async function deleteCategory(id: string) {
-    await supabase.from('categories').delete().eq('id', id);
+    setError(null);
+    const { error: deleteError } = await supabase.from('categories').delete().eq('id', id);
+    if (deleteError) {
+      setError('La suppression a échoué, veuillez réessayer.');
+      return;
+    }
     load();
   }
 
@@ -803,35 +895,481 @@ function CategoriesTab({ restaurantId }: { restaurantId: string }) {
   return (
     <div>
       <h2 className="font-bold text-slate-900 mb-4">Catégories du menu</h2>
-      <div className="flex gap-2 mb-4">
-        <Input placeholder="Nom de la catégorie" value={newName} onChange={(e) => setNewName(e.target.value)} className="flex-1" />
-        <Button onClick={addCategory}><Plus className="w-4 h-4" /> Ajouter</Button>
-      </div>
+
+      <Card className="p-4 mb-4 space-y-3">
+        <Input label="Nom de la catégorie" placeholder="Ex: Pizzas, Sandwichs..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <ImageUpload label="Image de la catégorie" value={newImage} onChange={setNewImage} folder={`categories/${restaurantId}`} />
+        <Button onClick={addCategory} disabled={saving} className="w-full">{saving ? 'Enregistrement...' : 'Ajouter la catégorie'}</Button>
+      </Card>
+      {error && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
       {categories.length === 0 ? (
         <EmptyState icon={<LayoutGrid className="w-8 h-8" />} title="Aucune catégorie" message="Créez des catégories pour organiser votre menu." />
       ) : (
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {categories.map((cat) => (
-            <Card key={cat.id} className="p-3 flex items-center justify-between">
-              {editing?.id === cat.id ? (
-                <input
-                  defaultValue={cat.name}
-                  onBlur={(e) => updateCategory(cat.id, e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && updateCategory(cat.id, (e.target as HTMLInputElement).value)}
-                  className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
-                  autoFocus
-                />
-              ) : (
-                <span className="font-medium text-slate-700">{cat.name}</span>
-              )}
-              <div className="flex gap-1">
-                <button onClick={() => setEditing(cat)} className="text-xs px-2 py-1 rounded-lg text-blue-600 bg-blue-50">
-                  <Edit className="w-3 h-3" />
-                </button>
-                <button onClick={() => deleteCategory(cat.id)} className="text-xs px-2 py-1 rounded-lg text-red-500 bg-red-50">
-                  <Trash2 className="w-3 h-3" />
-                </button>
+            <Card key={cat.id} className="p-3 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {cat.image_url ? (
+                  <img src={cat.image_url} alt={cat.name} className="w-full h-full object-cover" />
+                ) : (
+                  <LayoutGrid className="w-5 h-5 text-slate-300" />
+                )}
               </div>
+              {editing?.id === cat.id ? (
+                <div className="flex-1 space-y-2">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                    autoFocus
+                  />
+                  <ImageUpload label="" value={editImage} onChange={setEditImage} folder={`categories/${restaurantId}`} />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => updateCategory(cat.id)}>OK</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className="flex-1 font-medium text-slate-700 text-sm">{cat.name}</span>
+                  <div className="flex gap-1">
+                    <button onClick={() => { setEditing(cat); setEditName(cat.name); setEditImage(cat.image_url); }} className="text-xs px-2 py-1 rounded-lg text-blue-600 bg-blue-50">
+                      <Edit className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => deleteCategory(cat.id)} className="text-xs px-2 py-1 rounded-lg text-red-500 bg-red-50">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IngredientsTab({ restaurantId }: { restaurantId: string }) {
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState('');
+  const [newImage, setNewImage] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Ingredient | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('ingredients').select('*').eq('restaurant_id', restaurantId).order('name');
+    setIngredients((data as Ingredient[]) ?? []);
+    setLoading(false);
+  }, [restaurantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addIngredient() {
+    if (!newName) return;
+    setSaving(true);
+    setError(null);
+    const { error: insertError } = await supabase.from('ingredients').insert({ restaurant_id: restaurantId, name: newName, image_url: newImage, is_available: true });
+    if (insertError) {
+      setError('L\'ajout a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setNewName('');
+    setNewImage(null);
+    setSaving(false);
+    load();
+  }
+
+  async function updateIngredient(id: string) {
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('ingredients').update({ name: editName, image_url: editImage }).eq('id', id);
+    if (updateError) {
+      setError('La modification a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setEditing(null);
+    setSaving(false);
+    load();
+  }
+
+  async function deleteIngredient(id: string) {
+    setError(null);
+    const { error: deleteError } = await supabase.from('ingredients').delete().eq('id', id);
+    if (deleteError) {
+      setError('La suppression a échoué, veuillez réessayer.');
+      return;
+    }
+    load();
+  }
+
+  async function toggleIngredientAvailability(ing: Ingredient) {
+    await supabase.from('ingredients').update({ is_available: !ing.is_available }).eq('id', ing.id);
+    load();
+  }
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div>
+      <h2 className="font-bold text-slate-900 mb-4">Ingrédients</h2>
+
+      <Card className="p-4 mb-4 space-y-3">
+        <Input label="Nom de l'ingrédient" placeholder="Ex: Tomate, Fromage..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <ImageUpload label="Image de l'ingrédient" value={newImage} onChange={setNewImage} folder={`ingredients/${restaurantId}`} shape="round" />
+        <Button onClick={addIngredient} disabled={saving} className="w-full">{saving ? 'Enregistrement...' : 'Ajouter l\'ingrédient'}</Button>
+      </Card>
+      {error && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
+      {ingredients.length === 0 ? (
+        <EmptyState icon={<Leaf className="w-8 h-8" />} title="Aucun ingrédient" message="Ajoutez des ingrédients pour vos produits." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {ingredients.map((ing) => (
+            <Card key={ing.id} className="p-3 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {ing.image_url ? (
+                  <img src={ing.image_url} alt={ing.name} className="w-full h-full object-cover" />
+                ) : (
+                  <Leaf className="w-5 h-5 text-slate-300" />
+                )}
+              </div>
+              {editing?.id === ing.id ? (
+                <div className="flex-1 space-y-2">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                    autoFocus
+                  />
+                  <ImageUpload label="" value={editImage} onChange={setEditImage} folder={`ingredients/${restaurantId}`} shape="round" />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => updateIngredient(ing.id)}>OK</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className="flex-1 font-medium text-slate-700 text-sm">{ing.name}</span>
+                  <button onClick={() => toggleIngredientAvailability(ing)} className={`text-xs px-2 py-1 rounded-lg font-medium ${ing.is_available ? 'text-green-600 bg-green-50' : 'text-gray-500 bg-gray-100'}`}>
+                    {ing.is_available ? 'Disponible' : 'Indisponible'}
+                  </button>
+                  <div className="flex gap-1">
+                    <button onClick={() => { setEditing(ing); setEditName(ing.name); setEditImage(ing.image_url); }} className="text-xs px-2 py-1 rounded-lg text-blue-600 bg-blue-50">
+                      <Edit className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => deleteIngredient(ing.id)} className="text-xs px-2 py-1 rounded-lg text-red-500 bg-red-50">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SupplementsTab({ restaurantId }: { restaurantId: string }) {
+  const [supplements, setSupplements] = useState<Supplement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newImage, setNewImage] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Supplement | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPrice, setEditPrice] = useState('');
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('supplements').select('*').eq('restaurant_id', restaurantId).order('name');
+    setSupplements((data as Supplement[]) ?? []);
+    setLoading(false);
+  }, [restaurantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addSupplement() {
+    if (!newName || !newPrice) return;
+    setSaving(true);
+    setError(null);
+    const { error: insertError } = await supabase.from('supplements').insert({ restaurant_id: restaurantId, name: newName, price: parseFloat(newPrice), image_url: newImage, is_available: true });
+    if (insertError) {
+      setError('L\'ajout a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setNewName('');
+    setNewPrice('');
+    setNewImage(null);
+    setSaving(false);
+    load();
+  }
+
+  async function updateSupplement(id: string) {
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('supplements').update({ name: editName, price: parseFloat(editPrice), image_url: editImage }).eq('id', id);
+    if (updateError) {
+      setError('La modification a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setEditing(null);
+    setSaving(false);
+    load();
+  }
+
+  async function deleteSupplement(id: string) {
+    setError(null);
+    const { error: deleteError } = await supabase.from('supplements').delete().eq('id', id);
+    if (deleteError) {
+      setError('La suppression a échoué, veuillez réessayer.');
+      return;
+    }
+    load();
+  }
+
+  async function toggleSupplementAvailability(sup: Supplement) {
+    await supabase.from('supplements').update({ is_available: !sup.is_available }).eq('id', sup.id);
+    load();
+  }
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div>
+      <h2 className="font-bold text-slate-900 mb-4">Suppléments</h2>
+
+      <Card className="p-4 mb-4 space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Nom du supplément" placeholder="Ex: Sauce extra..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <Input label="Prix (€)" type="number" step="0.01" placeholder="0.00" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} />
+        </div>
+        <ImageUpload label="Image du supplément" value={newImage} onChange={setNewImage} folder={`supplements/${restaurantId}`} />
+        <Button onClick={addSupplement} disabled={saving} className="w-full">{saving ? 'Enregistrement...' : 'Ajouter le supplément'}</Button>
+      </Card>
+      {error && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
+      {supplements.length === 0 ? (
+        <EmptyState icon={<FlaskConical className="w-8 h-8" />} title="Aucun supplément" message="Ajoutez des suppléments proposés avec vos produits." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {supplements.map((sup) => (
+            <Card key={sup.id} className="p-3 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {sup.image_url ? (
+                  <img src={sup.image_url} alt={sup.name} className="w-full h-full object-cover" />
+                ) : (
+                  <FlaskConical className="w-5 h-5 text-slate-300" />
+                )}
+              </div>
+              {editing?.id === sup.id ? (
+                <div className="flex-1 space-y-2">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                    autoFocus
+                  />
+                  <input
+                    value={editPrice}
+                    onChange={(e) => setEditPrice(e.target.value)}
+                    type="number"
+                    step="0.01"
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                  />
+                  <ImageUpload label="" value={editImage} onChange={setEditImage} folder={`supplements/${restaurantId}`} />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => updateSupplement(sup.id)}>OK</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex-1">
+                    <span className="block font-medium text-slate-700 text-sm">{sup.name}</span>
+                    <span className="block text-xs text-orange-600 font-semibold">{formatPrice(sup.price)}</span>
+                  </div>
+                  <button onClick={() => toggleSupplementAvailability(sup)} className={`text-xs px-2 py-1 rounded-lg font-medium ${sup.is_available ? 'text-green-600 bg-green-50' : 'text-gray-500 bg-gray-100'}`}>
+                    {sup.is_available ? 'Disponible' : 'Indisponible'}
+                  </button>
+                  <div className="flex gap-1">
+                    <button onClick={() => { setEditing(sup); setEditName(sup.name); setEditPrice(String(sup.price)); setEditImage(sup.image_url); }} className="text-xs px-2 py-1 rounded-lg text-blue-600 bg-blue-50">
+                      <Edit className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => deleteSupplement(sup.id)} className="text-xs px-2 py-1 rounded-lg text-red-500 bg-red-50">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DrinksTab({ restaurantId }: { restaurantId: string }) {
+  const [drinks, setDrinks] = useState<Drink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newImage, setNewImage] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Drink | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPrice, setEditPrice] = useState('');
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('drinks').select('*').eq('restaurant_id', restaurantId).order('name');
+    setDrinks((data as Drink[]) ?? []);
+    setLoading(false);
+  }, [restaurantId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addDrink() {
+    if (!newName || !newPrice) return;
+    setSaving(true);
+    setError(null);
+    const { error: insertError } = await supabase.from('drinks').insert({ restaurant_id: restaurantId, name: newName, price: parseFloat(newPrice), image_url: newImage, is_available: true });
+    if (insertError) {
+      setError('L\'ajout a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setNewName(''); setNewPrice(''); setNewImage(null);
+    setSaving(false);
+    load();
+  }
+
+  async function updateDrink(id: string) {
+    setSaving(true);
+    setError(null);
+    const { error: updateError } = await supabase.from('drinks').update({ name: editName, price: parseFloat(editPrice), image_url: editImage }).eq('id', id);
+    if (updateError) {
+      setError('La modification a échoué, veuillez réessayer.');
+      setSaving(false);
+      return;
+    }
+    setEditing(null);
+    setSaving(false);
+    load();
+  }
+
+  async function deleteDrink(id: string) {
+    setError(null);
+    const { error: deleteError } = await supabase.from('drinks').delete().eq('id', id);
+    if (deleteError) {
+      setError('La suppression a échoué, veuillez réessayer.');
+      return;
+    }
+    load();
+  }
+
+  async function toggleDrinkAvailability(drink: Drink) {
+    await supabase.from('drinks').update({ is_available: !drink.is_available }).eq('id', drink.id);
+    load();
+  }
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div>
+      <Card className="p-4 mb-4 space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Nom de la boisson" placeholder="Ex: Coca, Eau..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <Input label="Prix (€)" type="number" step="0.01" placeholder="0.00" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} />
+        </div>
+        <ImageUpload label="Image de la boisson" value={newImage} onChange={setNewImage} folder={`drinks/${restaurantId}`} />
+        <Button onClick={addDrink} disabled={saving} className="w-full">{saving ? 'Enregistrement...' : 'Ajouter la boisson'}</Button>
+      </Card>
+      {error && (
+        <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+      {drinks.length === 0 ? (
+        <EmptyState icon={<CupSoda className="w-8 h-8" />} title="Aucune boisson" message="Ajoutez des boissons proposées avec vos produits." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {drinks.map((drink) => (
+            <Card key={drink.id} className="p-3 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {drink.image_url ? (
+                  <img src={drink.image_url} alt={drink.name} className="w-full h-full object-cover" />
+                ) : (
+                  <CupSoda className="w-5 h-5 text-slate-300" />
+                )}
+              </div>
+              {editing?.id === drink.id ? (
+                <div className="flex-1 space-y-2">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                    autoFocus
+                  />
+                  <input
+                    value={editPrice}
+                    onChange={(e) => setEditPrice(e.target.value)}
+                    type="number"
+                    step="0.01"
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-orange-400"
+                  />
+                  <ImageUpload label="" value={editImage} onChange={setEditImage} folder={`drinks/${restaurantId}`} />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => updateDrink(drink.id)}>OK</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex-1">
+                    <span className="block font-medium text-slate-700 text-sm">{drink.name}</span>
+                    <span className="block text-xs text-orange-600 font-semibold">{formatPrice(drink.price)}</span>
+                  </div>
+                  <button onClick={() => toggleDrinkAvailability(drink)} className={`text-xs px-2 py-1 rounded-lg font-medium ${drink.is_available ? 'text-green-600 bg-green-50' : 'text-gray-500 bg-gray-100'}`}>
+                    {drink.is_available ? 'Disponible' : 'Indisponible'}
+                  </button>
+                  <div className="flex gap-1">
+                    <button onClick={() => { setEditing(drink); setEditName(drink.name); setEditPrice(String(drink.price)); setEditImage(drink.image_url); }} className="text-xs px-2 py-1 rounded-lg text-blue-600 bg-blue-50">
+                      <Edit className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => deleteDrink(drink.id)} className="text-xs px-2 py-1 rounded-lg text-red-500 bg-red-50">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </>
+              )}
             </Card>
           ))}
         </div>

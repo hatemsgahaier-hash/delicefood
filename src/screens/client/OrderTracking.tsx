@@ -156,6 +156,9 @@ export default function OrderTracking({
                 {item.supplements.length > 0 && (
                   <p className="text-xs text-slate-400 ml-4">+ {item.supplements.map((s) => s.name).join(', ')}</p>
                 )}
+                {(item.drinks ?? []).length > 0 && (
+                  <p className="text-xs text-slate-400 ml-4">+ {item.drinks.map((d) => d.name).join(', ')}</p>
+                )}
               </div>
               <span className="text-slate-600">{formatPrice(item.unit_price * item.quantity)}</span>
             </div>

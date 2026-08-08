@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import AuthScreen from '@/screens/AuthScreen';
 import ClientHome from '@/screens/client/ClientHome';
+import CategoryProducts from '@/screens/client/CategoryProducts';
 import RestaurantMenu from '@/screens/client/RestaurantMenu';
 import CartScreen from '@/screens/client/CartScreen';
 import OrderTracking from '@/screens/client/OrderTracking';
@@ -10,13 +11,14 @@ import ProfileScreen from '@/screens/ProfileScreen';
 import RestaurateurDashboard from '@/screens/restaurateur/RestaurateurDashboard';
 import LivreurDashboard from '@/screens/livreur/LivreurDashboard';
 import NotificationBell from '@/components/NotificationBell';
-import type { Restaurant, Order, Product, Supplement } from '@/lib/supabase';
+import type { Restaurant, Order, Product, Supplement, Drink, Category } from '@/lib/supabase';
 import { addToCart } from '@/screens/client/CartScreen';
 import { Home, ShoppingCart, Clock, User, UtensilsCrossed, Bike, Bell } from 'lucide-react';
 import { Spinner } from '@/components/ui';
 
 type ClientView =
   | { name: 'home' }
+  | { name: 'category'; category: Category; restaurant: Restaurant }
   | { name: 'menu'; restaurant: Restaurant }
   | { name: 'cart' }
   | { name: 'tracking'; orderId: string }
@@ -52,9 +54,9 @@ function ClientApp() {
   const [view, setView] = useState<ClientView>({ name: 'home' });
   const [toast, setToast] = useState<string | null>(null);
 
-  async function handleAddToCart(product: Product, supplements: Supplement[]) {
+  async function handleAddToCart(product: Product, supplements: Supplement[], drinks: Drink[]) {
     if (!session) return;
-    await addToCart(session.user.id, product.restaurant_id, product, supplements);
+    await addToCart(session.user.id, product.restaurant_id, product, supplements, drinks);
     setToast('Produit ajouté au panier');
     setTimeout(() => setToast(null), 2000);
   }
@@ -62,8 +64,7 @@ function ClientApp() {
   const navActive = ['home', 'cart', 'history', 'profile'].includes(view.name) ? view.name : 'home';
 
   function handleNavChange(key: string) {
-    // Don't interrupt deep flows (menu, tracking) if user taps the active tab
-    if (key === 'home' && (view.name === 'menu' || view.name === 'tracking')) {
+    if (key === 'home' && (view.name === 'category' || view.name === 'menu' || view.name === 'tracking')) {
       setView({ name: 'home' });
       return;
     }
@@ -72,7 +73,19 @@ function ClientApp() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
-      {view.name === 'home' && <ClientHome onSelectRestaurant={(r) => setView({ name: 'menu', restaurant: r })} />}
+      {view.name === 'home' && (
+        <ClientHome
+          onSelectCategory={(cat, resto) => setView({ name: 'category', category: cat, restaurant: resto })}
+        />
+      )}
+      {view.name === 'category' && (
+        <CategoryProducts
+          category={view.category}
+          restaurant={view.restaurant}
+          onBack={() => setView({ name: 'home' })}
+          onAddToCart={handleAddToCart}
+        />
+      )}
       {view.name === 'menu' && (
         <RestaurantMenu
           restaurant={view.restaurant}

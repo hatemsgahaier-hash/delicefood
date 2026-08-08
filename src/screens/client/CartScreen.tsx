@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { Cart, CartItem, Product, Supplement, Address, Order } from '@/lib/supabase';
+import type { Cart, CartItem, Product, Supplement, Drink, Address, Order } from '@/lib/supabase';
 import { Button, Card, Spinner, EmptyState, Select, Badge } from '@/components/ui';
 import { ShoppingCart, Trash2, Minus, Plus, MapPin, CreditCard, Tag, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { formatPrice } from '@/lib/constants';
@@ -65,7 +65,9 @@ export default function CartScreen({
   }, [userId]);
 
   const subtotal = items.reduce(
-    (sum, item) => sum + item.unit_price * item.quantity + item.supplements.reduce((s, sup) => s + sup.price * item.quantity, 0),
+    (sum, item) => sum + item.unit_price * item.quantity
+      + item.supplements.reduce((s, sup) => s + sup.price * item.quantity, 0)
+      + (item.drinks ?? []).reduce((s, d) => s + d.price * item.quantity, 0),
     0
   );
   const deliveryFee = 2.99;
@@ -128,6 +130,7 @@ export default function CartScreen({
         quantity: item.quantity,
         unit_price: item.unit_price,
         supplements: item.supplements,
+        drinks: item.drinks ?? [],
       }))
     );
 
@@ -278,8 +281,15 @@ export default function CartScreen({
                     {item.supplements.map((s) => s.name).join(', ')}
                   </p>
                 )}
+                {(item.drinks ?? []).length > 0 && (
+                  <p className="text-xs text-slate-400 truncate">
+                    {item.drinks.map((d) => d.name).join(', ')}
+                  </p>
+                )}
                 <p className="text-sm font-bold text-orange-600 mt-1">
-                  {formatPrice(item.unit_price * item.quantity + item.supplements.reduce((s, sup) => s + sup.price * item.quantity, 0))}
+                  {formatPrice(item.unit_price * item.quantity
+                    + item.supplements.reduce((s, sup) => s + sup.price * item.quantity, 0)
+                    + (item.drinks ?? []).reduce((s, d) => s + d.price * item.quantity, 0))}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -326,7 +336,8 @@ export async function addToCart(
   userId: string,
   restaurantId: string,
   product: Product,
-  supplements: Supplement[]
+  supplements: Supplement[],
+  drinks: Drink[]
 ) {
   let { data: cart, error } = await supabase
     .from('carts')
@@ -363,5 +374,6 @@ export async function addToCart(
     quantity: 1,
     unit_price: unitPrice,
     supplements: supplements.map((s) => ({ id: s.id, name: s.name, price: s.price })),
+    drinks: drinks.map((d) => ({ id: d.id, name: d.name, price: d.price })),
   });
 }
